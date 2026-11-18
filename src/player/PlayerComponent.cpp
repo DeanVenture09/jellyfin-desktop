@@ -947,6 +947,36 @@ bool PlayerComponent::muted()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+QVariantList PlayerComponent::getAudioTracks()
+{
+  QVariantList res;
+  if (!m_mpv) {
+    qWarning() << "PlayerComponent::getAudioTracks: mpv not initialized yet";
+    return res;
+  }
+
+  for (const auto& track : m_mpv->getProperty("track-list").toList())
+  {
+    const QVariantMap map = track.toMap();
+    if (map.value("type").toString() != "audio" || map.value("external").toBool())
+      continue;
+
+    QVariantMap out;
+    out["id"] = map.value("id");
+    out["ffIndex"] = map.value("ff-index");
+    out["lang"] = map.value("lang");
+    out["title"] = map.value("title");
+    out["codec"] = map.value("codec");
+    out["channels"] = map.value("demux-channel-count");
+    out["isDefault"] = map.value("default");
+    out["selected"] = map.value("selected");
+    res += out;
+  }
+
+  return res;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 QVariantList PlayerComponent::findStreamsForURL(const QString &url)
 {
   if (!m_mpv) {
