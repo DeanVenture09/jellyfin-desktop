@@ -187,6 +187,11 @@
                     this.events.trigger(this, 'unpause');
                 }
 
+                if (!this._liveAudioTracksChecked) {
+                    this._liveAudioTracksChecked = true;
+                    this.exposeLiveAudioTracks();
+                }
+
                 this.events.trigger(this, 'playing');
             };
 
@@ -305,6 +310,81 @@
 
         /**
          * @private
+         * Live TV: the server describes the stream with a single audio track
+         * (Index -1) even when it carries several, so no audio menu is offered.
+         * mpv sees the real tracks; when there is more than one, put them in the
+         * media source so the audio menu can switch between them.
+         */
+        exposeLiveAudioTracks() {
+            const options = this._currentPlayOptions;
+            const mediaSource = options?.mediaSource;
+            if (!mediaSource || !mediaSource.IsInfiniteStream || options.playMethod === 'Transcode'
+                || !Array.isArray(mediaSource.MediaStreams) || !window.api.player.getAudioTracks) {
+                return;
+            }
+
+            const serverAudio = mediaSource.MediaStreams.filter((s) => s.Type === 'Audio');
+            if (serverAudio.length > 1 || serverAudio.some((s) => s.Index !== -1)) {
+                return; // the server already describes the real tracks
+            }
+
+            window.api.player.getAudioTracks((tracks) => {
+                if (this._currentPlayOptions !== options || !Array.isArray(tracks) || tracks.length < 2) {
+                    return;
+                }
+
+                const layouts = { 1: 'Mono', 2: 'Stereo', 6: '5.1', 8: '7.1' };
+                const used = new Set(mediaSource.MediaStreams.map((s) => s.Index));
+                const audioStreams = tracks.map((track, i) => {
+                    let index = Number.isInteger(track.ffIndex) ? track.ffIndex : 1000 + (track.id || i + 1);
+                    while (used.has(index)) {
+                        index += 1000;
+                    }
+                    used.add(index);
+
+                    const lang = track.lang || null;
+                    const name = track.title || (lang ? lang.charAt(0).toUpperCase() + lang.slice(1) : `Track ${i + 1}`);
+                    const codec = track.codec || serverAudio[0]?.Codec || '';
+                    const channels = track.channels || null;
+                    return {
+                        Type: 'Audio',
+                        Index: index,
+                        Codec: codec,
+                        Language: lang,
+                        Title: track.title || null,
+                        Channels: channels,
+                        IsDefault: !!track.isDefault,
+                        IsForced: false,
+                        IsExternal: false,
+                        IsTextSubtitleStream: false,
+                        SupportsExternalStream: false,
+                        DisplayTitle: [name, codec.toUpperCase(), layouts[channels] || (channels ? `${channels} ch` : '')]
+                            .filter(Boolean).join(' - ')
+                    };
+                });
+
+                // Same position as the server's single audio entry, in mpv's track order,
+                // so getRelativeIndexByType maps each Index to the matching mpv track id.
+                const streams = mediaSource.MediaStreams;
+                const firstAudio = streams.findIndex((s) => s.Type === 'Audio');
+                const others = streams.filter((s) => s.Type !== 'Audio');
+                const insertAt = firstAudio < 0 ? others.length : streams.slice(0, firstAudio).filter((s) => s.Type !== 'Audio').length;
+                others.splice(insertAt, 0, ...audioStreams);
+                streams.length = 0;
+                streams.push(...others);
+
+                const selected = tracks.findIndex((t) => t.selected);
+                if (selected >= 0) {
+                    mediaSource.DefaultAudioStreamIndex = audioStreams[selected].Index;
+                }
+
+                console.log(`[MPV] Live TV: exposing ${audioStreams.length} audio tracks from the stream`);
+                this.events.trigger(this, 'mediastreamschange');
+            });
+        }
+
+        /**
+         * @private
          */
         setCurrentSrc(elem, options) {
             return new Promise((resolve) => {
@@ -315,6 +395,7 @@
                 // Convert to seconds
                 const ms = (options.playerStartPositionTicks || 0) / 10000;
                 this._currentPlayOptions = options;
+                this._liveAudioTracksChecked = false;
                 this._subtitleTrackIndexToSetOnPlaying = options.mediaSource.DefaultSubtitleStreamIndex == null ? -1 : options.mediaSource.DefaultSubtitleStreamIndex;
                 this._audioTrackIndexToSetOnPlaying = options.mediaSource.DefaultAudioStreamIndex;
 

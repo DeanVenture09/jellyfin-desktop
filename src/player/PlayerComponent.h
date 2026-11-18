@@ -94,6 +94,11 @@ public:
   //      "description" -> QString  (human readable description intended for display)
   //
   Q_INVOKABLE virtual QVariant getAudioDeviceList();
+
+  // Audio tracks mpv found in the loaded file. Live TV needs this: the server describes
+  // those streams with a single audio track even when they carry several.
+  Q_INVOKABLE QVariantList getAudioTracks();
+
   // Uses the "name" from the device list.
   Q_INVOKABLE virtual void setAudioDevice(const QString& name);
 
